@@ -101,7 +101,7 @@ class Evaluator:
         Returns:
             Confusion matrix as nested Dict[true_tag][pred_tag] = count.
         """
-        matrix: Dict[str, Dict[str, int]] = {tag: defaultdict(int) for tag in tag_list}
+        matrix: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
         for gold, pred in zip(gold_tags, pred_tags):
             matrix[gold][pred] += 1
