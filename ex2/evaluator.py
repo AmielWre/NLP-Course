@@ -6,8 +6,14 @@ evaluating POS tagging performance.
 """
 
 import logging
+import os
 from typing import List, Tuple, Dict, Set
 from collections import defaultdict
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.colors
+import matplotlib.pyplot as plt
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -205,9 +211,10 @@ class Evaluator:
         tag_list: List[str],
         tagger_name: str = "Tagger",
         top_errors: int = 10,
+        output_dir: str = "results",
     ) -> Tuple[Dict[str, Dict[str, int]], List[Tuple[str, str, int]]]:
         """
-        Build confusion matrix and analyze error patterns.
+        Build confusion matrix and analyze error patterns. Creates and saves a heatmap plot.
 
         Args:
             gold_sentences: Gold standard tagged sentences.
@@ -215,6 +222,7 @@ class Evaluator:
             tag_list: Sorted list of all possible tags.
             tagger_name: Name of tagger for logging.
             top_errors: Number of top error pairs to report.
+            output_dir: Directory to save plot (relative to ex2/).
 
         Returns:
             Tuple of (confusion_matrix, top_error_pairs).
@@ -233,5 +241,65 @@ class Evaluator:
         logger.info(f"  Top {top_errors} Most Frequent Error Pairs:")
         for i, (true_tag, pred_tag, count) in enumerate(top_errors_list, 1):
             logger.info(f"    {i}. True={true_tag:6s} Pred={pred_tag:6s} Count={count:5d}")
+
+        # Create confusion matrix heatmap
+        all_tags = sorted(set(gold_tags_flat) | set(pred_tags_flat))
+        
+        # Build matrix array
+        matrix_array = np.zeros((len(all_tags), len(all_tags)), dtype=int)
+        tag_to_idx = {tag: idx for idx, tag in enumerate(all_tags)}
+        
+        for gold, pred in zip(gold_tags_flat, pred_tags_flat):
+            if gold in tag_to_idx and pred in tag_to_idx:
+                matrix_array[tag_to_idx[gold], tag_to_idx[pred]] += 1
+
+        # Create figure
+        fig, ax = plt.subplots(figsize=(16, 14))
+        
+        # Use LogNorm so low-and-mid frequency errors stand out alongside dominant tags
+        # vmin=1 prevents log10(0) mathematical runtime warnings
+        max_val = max(1, matrix_array.max())
+        im = ax.imshow(
+            matrix_array, 
+            cmap='Blues', 
+            aspect='auto', 
+            norm=matplotlib.colors.LogNorm(vmin=1, vmax=max_val)
+        )
+
+        # Set ticks and labels
+        ax.set_xticks(np.arange(len(all_tags)))
+        ax.set_yticks(np.arange(len(all_tags)))
+        ax.set_xticklabels(all_tags, fontsize=8)
+        ax.set_yticklabels(all_tags, fontsize=8)
+
+        # Rotate labels
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
+
+        # Add thin, subtle grid lines between cells for improved scannability
+        ax.set_xticks(np.arange(len(all_tags)) + 0.5, minor=True)
+        ax.set_yticks(np.arange(len(all_tags)) + 0.5, minor=True)
+        ax.grid(which="minor", color="lightgray", linestyle="-", linewidth=0.5)
+        
+        # Hide the minor tick markers themselves while keeping the grid lines
+        ax.tick_params(which="minor", bottom=False, left=False)
+
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Count', rotation=270, labelpad=20)
+
+        # Labels
+        ax.set_xlabel('Predicted Tag', fontsize=12, fontweight='bold')
+        ax.set_ylabel('True Tag', fontsize=12, fontweight='bold')
+        ax.set_title(f'{tagger_name} - Confusion Matrix\n(True Tags vs Predicted Tags)', 
+                     fontsize=14, fontweight='bold')
+
+        plt.tight_layout()
+
+        # Save plot
+        os.makedirs(output_dir, exist_ok=True)
+        plot_path = os.path.join(output_dir, f"{tagger_name.replace(' ', '_')}_confusion_matrix.png")
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        logger.info(f"Saved confusion matrix plot to {plot_path}")
+        plt.close()
 
         return matrix, top_errors_list

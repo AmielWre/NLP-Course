@@ -10,8 +10,13 @@ This script coordinates the full POS tagging pipeline including:
 
 import logging
 import sys
+import os
 from typing import List, Tuple, Dict, Set
 from collections import Counter
+import matplotlib
+matplotlib.use('Agg')  # Forces matplotlib to run without opening a GUI window
+import matplotlib.pyplot as plt
+import numpy as np
 
 from data_loader import DataLoader
 from baseline_tagger import BaselineTagger
@@ -26,7 +31,9 @@ def setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         # time, name, line, level, message
-        format="%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s",
+        # format="%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(message)s",
+        # Simplified format for cleaner output
+        format="File %(name)s - line %(lineno)d - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.StreamHandler(sys.stdout),
@@ -228,7 +235,7 @@ def run_pseudo_words_mle_tagger(
         Dictionary with evaluation results.
     """
     logger = logging.getLogger(__name__)
-    logger.info("\n" + "=" * 80 + "\n" + "PART (e.1): PSEUDO-WORDS + MLE" + "\n" + "=" * 80)
+    logger.info("\n" + "=" * 80 + "\n" + "PART (e.2): PSEUDO-WORDS + MLE" + "\n" + "=" * 80)
 
     # Convert training data with pseudo-words
     pseudo_converter = PseudoWordConverter(min_frequency=min_freq)
@@ -290,6 +297,7 @@ def run_pseudo_words_addone_tagger(
     test_tag_sents: List[List[str]],
     train_word_sents: List[List[str]],
     min_freq: int = 5,
+    output_dir: str = "results",
 ) -> Tuple[Dict[str, float], Dict, List[Tuple[str, str, int]]]:
     """
     Train and evaluate HMM tagger with pseudo-words and Add-One smoothing.
@@ -302,12 +310,13 @@ def run_pseudo_words_addone_tagger(
         test_tag_sents: Test tags (gold standard).
         train_word_sents: Training words (for known/unknown split).
         min_freq: Minimum frequency threshold for pseudo-word replacement.
+        output_dir: Directory to save confusion matrix plot.
 
     Returns:
         Tuple of (results, confusion_matrix, top_errors).
     """
     logger = logging.getLogger(__name__)
-    logger.info("\n" + "=" * 80 + "\n" + "PART (e.2): PSEUDO-WORDS + Add-One Smoothing (Final System)" + "\n" + "=" * 80)
+    logger.info("\n" + "=" * 80 + "\n" + "PART (e.3): PSEUDO-WORDS + Add-One Smoothing (Final System)" + "\n" + "=" * 80)
 
     # Convert training data with pseudo-words
     pseudo_converter = PseudoWordConverter(min_frequency=min_freq)
@@ -368,6 +377,7 @@ def run_pseudo_words_addone_tagger(
         tag_list,
         tagger_name="Pseudo-Words (Add-One Smoothing)",
         top_errors=10,
+        output_dir=output_dir,
     )
 
     return results, matrix, top_errors
@@ -379,9 +389,10 @@ def print_comparison(
     hmm_addone_res: Dict,
     pseudo_mle_res: Dict,
     pseudo_addone_res: Dict,
+    output_dir: str = "results",
 ) -> None:
     """
-    Print comprehensive comparison of all taggers.
+    Print comprehensive comparison of all taggers and create comparison plot.
 
     Args:
         baseline_res: Baseline tagger results.
@@ -389,6 +400,7 @@ def print_comparison(
         hmm_addone_res: HMM Add-One results.
         pseudo_mle_res: Pseudo-words MLE results.
         pseudo_addone_res: Pseudo-words Add-One results.
+        output_dir: Directory to save comparison plot.
     """
     logger = logging.getLogger(__name__)
 
@@ -402,6 +414,12 @@ def print_comparison(
     )
     logger.info("-" * 80)
 
+    # Collect data for plotting
+    tagger_names = []
+    known_ers = []
+    unknown_ers = []
+    overall_ers = []
+
     # Print results
     for res in results_list:
         known_er = res.get("known_error_rate", res.get("overall_error_rate", 0.0))
@@ -412,13 +430,60 @@ def print_comparison(
             f"{res['name']:<35} {known_er:<12.4f} {unknown_er:<12.4f} {overall_er:<12.4f}"
         )
 
+        tagger_names.append(res['name'])
+        known_ers.append(known_er)
+        unknown_ers.append(unknown_er)
+        overall_ers.append(overall_er)
+
     logger.info("-" * 80)
     logger.info("Legend: ER = Error Rate (lower is better)")
+
+    # Create comparison plot
+    fig, ax = plt.subplots(figsize=(14, 6))
+    
+    x = np.arange(len(tagger_names))
+    width = 0.25
+    
+    # Create bars
+    bars1 = ax.bar(x - width, known_ers, width, label='Known Words ER', color='#2ecc71', alpha=0.8)
+    bars2 = ax.bar(x, unknown_ers, width, label='Unknown Words ER', color='#e74c3c', alpha=0.8)
+    bars3 = ax.bar(x + width, overall_ers, width, label='Overall ER', color='#3498db', alpha=0.8)
+    
+    # Labels and title
+    ax.set_xlabel('Tagger', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Error Rate', fontsize=12, fontweight='bold')
+    ax.set_title('POS Tagger Performance Comparison - Error Rates', fontsize=14, fontweight='bold')
+    ax.set_xticks(x)
+    ax.set_xticklabels(tagger_names, rotation=15, ha='right')
+    ax.legend(fontsize=11)
+    ax.grid(axis='y', alpha=0.3, linestyle='--')
+    ax.set_ylim(0, max(max(known_ers), max(unknown_ers), max(overall_ers)) * 1.1)
+    
+    # Add value labels on bars
+    for bars in [bars1, bars2, bars3]:
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                    f'{height:.3f}',
+                    ha='center', va='bottom', fontsize=9)
+    
+    plt.tight_layout()
+    
+    # Save plot
+    os.makedirs(output_dir, exist_ok=True)
+    plot_path = os.path.join(output_dir, "tagger_comparison_error_rates.png")
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    logger.info(f"Saved comparison plot to {plot_path}")
+    plt.close()
 
 
 def main() -> None:
     """Main orchestration function for the POS tagging pipeline."""
     logger = logging.getLogger(__name__)
+
+    # Set up output directory for results
+    output_dir = "ex2/results"
+    os.makedirs(output_dir, exist_ok=True)
 
     # ===== PART (a): DATA LOADING =====
     logger.info("\n" + "=" * 80 + "\n" + "PART (a): DATA LOADING AND PARTITIONING" + "\n" + "=" * 80)
@@ -459,7 +524,8 @@ def main() -> None:
 
     # ===== PART (e.2): PSEUDO-WORDS ADD-ONE (FINAL SYSTEM) =====
     pseudo_addone_results, confusion_matrix, top_errors = run_pseudo_words_addone_tagger(
-        train_sents, test_word_sents, test_tag_sents, train_word_sents, min_freq=5
+        train_sents, test_word_sents, test_tag_sents, train_word_sents, min_freq=5,
+        output_dir=output_dir
     )
 
     # ===== COMPARISON =====
@@ -469,6 +535,7 @@ def main() -> None:
         hmm_addone_results,
         pseudo_mle_results,
         pseudo_addone_results,
+        output_dir=output_dir,
     )
 
     logger.info("\n" + "=" * 80)
